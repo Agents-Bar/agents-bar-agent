@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "ai-traineree-service"
+version = "0.1.0"
+description = ""
+authors = ["Dawid Laszuk <laszukdawid@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+fastapi = "^0.62.0"
+requests = "^2.25.1"
+ai-traineree = "^0.0.4"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
