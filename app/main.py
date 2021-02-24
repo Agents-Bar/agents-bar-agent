@@ -23,8 +23,11 @@ class AgentStep(BaseModel):
 
 SUPPORTED_AGENTS = ['dqn', 'ppo', 'ddpg']
 
+@app.get("/ping")
+def ping():
+    return {"msg": "All good"}
 
-@app.post("/agent/create")
+@app.post("/agent", status_code=201)
 def create_agent(model_type: str, state_size: int, action_size: int, model_config: Optional[Dict[str, str]]):
     global agent
     if agent is not None:
@@ -41,35 +44,51 @@ def create_agent(model_type: str, state_size: int, action_size: int, model_confi
         agent = DDPGAgent(state_size=state_size, action_size=action_size, **model_config)
     
     print(f"Agent: {agent}")
-    return {"status": 201, "response": "Successfully created a new agent"}
+    return {"response": "Successfully created a new agent"}
 
 
-@app.delete("/agent/delete")
+@app.delete("/agent/{agent_name}", status_code=204)
 def delete_agent(agent_name: str):
     """Assumption is that the service contains only one agent. Otherwise... something else."""
     global agent
     if agent is None:
-        return {"status": 204, "response": "Agent doesn't exist."}
+        return {"response": "Agent doesn't exist."}
 
     if agent.name == agent_name:
         agent = None
-        return {"status": 204, "response": "Deleted successfully."}
+        return {"response": "Deleted successfully."}
 
     raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
     
 
-@app.get("/agent/info")
+@app.get("/agent/")
 def get_agent_info():
+    if agent is None:
+        raise HTTPException(status_code=404, detail="No agent found")
+    print(agent)
+    agent_info = {"agent_type": str(agent), "hyperparameters": agent.hparams}
+    return agent_info
+
+
+@app.get("/agent/hparams")
+def get_agent_info():
+    if agent is None:
+        raise HTTPException(status_code=404, detail="No agent found")
     print(agent.hparams)
-    return {"status": 200, "response": json.dumps(agent.hparams)}
+    return {"hyperparameters": agent.hparams}
+
 
 @app.get("/agent/loss")
 def get_agent_loss():
+    if agent is None:
+        raise HTTPException(status_code=404, detail="No agent found")
     print(agent.loss)
-    return {"status": 200, "response": json.dumps(agent.loss)}
+    return agent.loss
 
-@app.post("/agent/step")
+
+@app.post("/agent/step", status_code=200)
 def agent_step(agent_step: AgentStep):
+    print(agent_step)
     if isinstance(agent, DQNAgent):
         action = agent_step.action[0]
     else:
@@ -82,12 +101,12 @@ def agent_step(agent_step: AgentStep):
         agent_step.next_state,
         agent_step.done
     )
-    return {"status": 200, "response": "Stepping"}
+    return {"response": "Stepping"}
 
 @app.post("/agent/act")
 def agent_act(state: List[float]):
     try:
         action = agent.act(state)
-        return {"status": 200, "response": {"action": action}}
+        return {"action": action}
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Sorry :(\n{e}")
+        raise HTTPException(status_code=500, detail=f"Sorry :(\n{e}")
