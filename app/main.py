@@ -1,9 +1,4 @@
-import json
-
 from ai_traineree.types import AgentType
-from ai_traineree.agents.dqn import DQNAgent
-from ai_traineree.agents.ddpg import DDPGAgent
-from ai_traineree.agents.ppo import PPOAgent
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
@@ -21,7 +16,7 @@ class AgentStep(BaseModel):
     done: bool
 
 
-SUPPORTED_AGENTS = ['dqn', 'ppo', 'ddpg']
+SUPPORTED_AGENTS = ['dqn', 'ppo', 'ddpg', 'sac', 'd3pg', 'd4pg', 'rainbow', 'td3']
 
 @app.get("/ping")
 def ping():
@@ -37,11 +32,28 @@ def create_agent(model_type: str, state_size: int, action_size: int, model_confi
         raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
 
     if model_type.lower() == "dqn":
+        from ai_traineree.agents.dqn import DQNAgent
         agent = DQNAgent(input_shape=state_size, output_shape=action_size, **model_config)
+    elif model_type.lower() == "rainbow":
+        from ai_traineree.agents.rainbow import RainbowAgent
+        agent = RainbowAgent(input_shape=state_size, output_shape=action_size, **model_config)
     elif model_type.lower() == "ppo":
+        from ai_traineree.agents.ppo import PPOAgent
         agent = PPOAgent(state_size=state_size, action_size=action_size, **model_config)
     elif model_type.lower() == 'ddpg':
+        from ai_traineree.agents.ddpg import DDPGAgent
         agent = DDPGAgent(state_size=state_size, action_size=action_size, **model_config)
+    elif model_type.lower() == 'd3pg':
+        from ai_traineree.agents.d3pg import D3PGAgent
+        agent = D3PGAgent(state_size=state_size, action_size=action_size, **model_config)
+    elif model_type.lower() == 'd4pg':
+        from ai_traineree.agents.d4pg import D4PGAgent
+        agent = D4PGAgent(state_size=state_size, action_size=action_size, **model_config)
+    elif model_type.lower() == 'sac':
+        from ai_traineree.agents.sac import SACAgent
+        agent = SACAgent(state_size=state_size, action_size=action_size, **model_config)
+    else:
+        raise HTTPException(400, detail="It's not clear how you got here. Well done. But that's incorrect. Please select supported agent.")
     
     print(f"Agent: {agent}")
     return {"response": "Successfully created a new agent"}
@@ -88,9 +100,10 @@ def get_agent_loss():
 
 @app.post("/agent/step", status_code=200)
 def agent_step(agent_step: AgentStep):
-    print(agent_step)
-    if isinstance(agent, DQNAgent):
-        action = agent_step.action[0]
+    global agent
+    # TODO: Agent should have a property whether it's discrete
+    if agent.name in ('DQN', 'Rainbow'):
+        action = int(agent_step.action[0])
     else:
         action = agent_step.action
 
@@ -103,10 +116,12 @@ def agent_step(agent_step: AgentStep):
     )
     return {"response": "Stepping"}
 
+
 @app.post("/agent/act")
-def agent_act(state: List[float]):
+def agent_act(state: List[float], noise: float=0.):
+    global agent
     try:
-        action = agent.act(state)
+        action = agent.act(state, noise)
         return {"action": action}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sorry :(\n{e}")
