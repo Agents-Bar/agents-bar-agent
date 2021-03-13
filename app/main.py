@@ -35,8 +35,8 @@ def define_agent(model_type: str, state_size, action_size, model_config):
 app = FastAPI()
 
 agent_type: Optional[str] = os.environ.get('AGENT_TYPE', 'DQN')
-state_size = os.environ.get("state_size", 27)
-action_size = os.environ.get("action_size", 256)
+state_size = int(os.environ.get("STATE_SIZE", 27))
+action_size = int(os.environ.get("ACTION_SIZE", 256))
 model_config = {}
 agent: Optional[AgentType] = define_agent(agent_type, state_size, action_size, model_config=model_config)
 
