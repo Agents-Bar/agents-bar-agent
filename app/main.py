@@ -1,36 +1,11 @@
+import os
+
 from ai_traineree.types import AgentType
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 
-app = FastAPI()
-
-agent: Optional[AgentType] = None
-
-
-class AgentStep(BaseModel):
-    state: List[float]
-    action: List[float]
-    next_state: List[float]
-    reward: float
-    done: bool
-
-
-SUPPORTED_AGENTS = ['dqn', 'ppo', 'ddpg', 'sac', 'd3pg', 'd4pg', 'rainbow', 'td3']
-
-@app.get("/ping")
-def ping():
-    return {"msg": "All good"}
-
-@app.post("/agent", status_code=201)
-def create_agent(model_type: str, state_size: int, action_size: int, model_config: Optional[Dict[str, str]]):
-    global agent
-    if agent is not None:
-        raise HTTPException(status_code=400, detail="Agent already exists. If you want to create a new one, please first remove old one.")
-
-    if model_type.lower() not in SUPPORTED_AGENTS:
-        raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
-
+def define_agent(model_type: str, state_size, action_size, model_config):
     if model_type.lower() == "dqn":
         from ai_traineree.agents.dqn import DQNAgent
         agent = DQNAgent(input_shape=state_size, output_shape=action_size, **model_config)
@@ -53,6 +28,44 @@ def create_agent(model_type: str, state_size: int, action_size: int, model_confi
         from ai_traineree.agents.sac import SACAgent
         agent = SACAgent(state_size=state_size, action_size=action_size, **model_config)
     else:
+        agent = None
+    return agent
+
+
+app = FastAPI()
+
+agent_type: Optional[str] = os.environ.get('AGENT_TYPE', 'DQN')
+state_size = os.environ.get("state_size", 27)
+action_size = os.environ.get("action_size", 256)
+model_config = {}
+agent: Optional[AgentType] = define_agent(agent_type, state_size, action_size, model_config=model_config)
+
+
+class AgentStep(BaseModel):
+    state: List[float]
+    action: List[float]
+    next_state: List[float]
+    reward: float
+    done: bool
+
+
+SUPPORTED_AGENTS = ['dqn', 'ppo', 'ddpg', 'sac', 'd3pg', 'd4pg', 'rainbow', 'td3']
+
+@app.get("/ping")
+def ping():
+    return {"msg": "All good"}
+
+@app.post("/agent", status_code=201)
+def create_agent(model_type: str, state_size: int, action_size: int, model_config: Optional[Dict[str, str]]):
+    global agent
+    # if agent is not None:
+    #     raise HTTPException(status_code=400, detail="Agent already exists. If you want to create a new one, please first remove old one.")
+
+    if model_type.lower() not in SUPPORTED_AGENTS:
+        raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
+
+    agent = define_agent(model_type, state_size, action_size, model_config)
+    if agent is None:
         raise HTTPException(400, detail="It's not clear how you got here. Well done. But that's incorrect. Please select supported agent.")
     
     print(f"Agent: {agent}")
