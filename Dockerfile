@@ -25,10 +25,10 @@ EXPOSE 80
 FROM python:3.8-slim AS prod
 # set path to our python api file
 ENV MODULE_NAME="app.main"
-COPY requirements.txt .
 
 # install dependencies; for pytorch, install 1.8.1 as CPU
 RUN pip install https://download.pytorch.org/whl/cpu/torch-1.8.1%2Bcpu-cp38-cp38-linux_x86_64.whl
+COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY ./ /app

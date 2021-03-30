@@ -1,44 +1,56 @@
 import os
-
-from ai_traineree.types import AgentType
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from typing import Dict, List, Optional
 
-def define_agent(model_type: str, state_size, action_size, model_config):
-    if model_type.lower() == "dqn":
-        from ai_traineree.agents.dqn import DQNAgent
-        agent = DQNAgent(input_shape=state_size, output_shape=action_size, **model_config)
-    elif model_type.lower() == "rainbow":
-        from ai_traineree.agents.rainbow import RainbowAgent
-        agent = RainbowAgent(input_shape=state_size, output_shape=action_size, **model_config)
-    elif model_type.lower() == "ppo":
-        from ai_traineree.agents.ppo import PPOAgent
-        agent = PPOAgent(state_size=state_size, action_size=action_size, **model_config)
-    elif model_type.lower() == 'ddpg':
-        from ai_traineree.agents.ddpg import DDPGAgent
-        agent = DDPGAgent(state_size=state_size, action_size=action_size, **model_config)
-    elif model_type.lower() == 'd3pg':
-        from ai_traineree.agents.d3pg import D3PGAgent
-        agent = D3PGAgent(state_size=state_size, action_size=action_size, **model_config)
-    elif model_type.lower() == 'd4pg':
-        from ai_traineree.agents.d4pg import D4PGAgent
-        agent = D4PGAgent(state_size=state_size, action_size=action_size, **model_config)
-    elif model_type.lower() == 'sac':
-        from ai_traineree.agents.sac import SACAgent
-        agent = SACAgent(state_size=state_size, action_size=action_size, **model_config)
-    else:
-        agent = None
-    return agent
+import requests
+from ai_traineree.agents.agent_factory import AgentFactory
+from ai_traineree.types import AgentState
+from ai_traineree.utils import serialize
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-
+# Initiate module with setting up a server
 app = FastAPI()
 
-agent_type: Optional[str] = os.environ.get('AGENT_TYPE', 'DQN')
-state_size = int(os.environ.get("STATE_SIZE", 27))
-action_size = int(os.environ.get("ACTION_SIZE", 256))
-model_config = {}
-agent: Optional[AgentType] = define_agent(agent_type, state_size, action_size, model_config=model_config)
+standalone = os.environ.get('STANDALONE')
+if standalone is not None:
+    standalone = not (standalone.lower() == 'false' or standalone == '0')
+else:
+    standalone = True
+
+# NOTE: Sometimes there's something wrong with these. Pay attention.
+print(f"OS env: {standalone}")
+print(f"OS env: {os.environ}")
+
+if not standalone:
+    agent_id = int(os.environ.get('AGENT_ID'))
+    url_base = os.environ.get("URL", "http://backend/api/v1/snap")
+    url = f'{url_base}/{agent_id}'
+    print(f"GET {url}")
+    response = requests.get(url)
+    data = response.json()
+
+    agent_config = data['agent_config']
+    agent_type = agent_config['model'].upper()
+    state_size = int(agent_config.pop('state_size'))
+    action_size = int(agent_config.pop('action_size'))
+
+    # TODO: Deserialize properly NetworkState and BufferState
+    # network_state = data['network_state']
+    # buffer_state = data['buffer_state']
+    network_state = None
+    buffer_state = None
+
+    agent_state = AgentState(
+        model=agent_type,
+        state_space=state_size,
+        action_space=action_size,
+        config=agent_config,
+        network=network_state,
+        buffer=buffer_state,
+    )
+
+    # Leave things to get magic done in factory
+    agent = AgentFactory.from_state(state=agent_state)
 
 
 class AgentStep(BaseModel):
@@ -48,6 +60,14 @@ class AgentStep(BaseModel):
     reward: float
     done: bool
 
+class AgentStateJSON(BaseModel):
+    model: str
+    state_space: int
+    action_space: int
+    config: Dict[str, str]
+    network: Optional[Dict[str, str]]
+    buffer: Optional[Dict[str, str]]
+
 
 SUPPORTED_AGENTS = ['dqn', 'ppo', 'ddpg', 'sac', 'd3pg', 'd4pg', 'rainbow', 'td3']
 
@@ -56,7 +76,14 @@ def ping():
     return {"msg": "All good"}
 
 @app.post("/agent", status_code=201)
-def create_agent(model_type: str, state_size: int, action_size: int, model_config: Optional[Dict[str, str]]):
+def create_agent(
+    model_type: str,
+    state_size: int,
+    action_size: int,
+    model_config: Optional[Dict[str, str]],
+    network_state: Optional[Dict[str, str]],
+    buffer_state: Optional[Dict[str, str]]
+):
     global agent
     # if agent is not None:
     #     raise HTTPException(status_code=400, detail="Agent already exists. If you want to create a new one, please first remove old one.")
@@ -64,7 +91,10 @@ def create_agent(model_type: str, state_size: int, action_size: int, model_confi
     if model_type.lower() not in SUPPORTED_AGENTS:
         raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
 
-    agent = define_agent(model_type, state_size, action_size, model_config)
+    network_state = None
+    buffer_state = None
+    agent_state = AgentState(model=model_type.upper(), state_space=state_size, action_space=action_size, config=model_config, network=network_state, buffer=buffer_state)
+    agent = AgentFactory.from_state(agent_state)
     if agent is None:
         raise HTTPException(400, detail="It's not clear how you got here. Well done. But that's incorrect. Please select supported agent.")
     
@@ -85,6 +115,30 @@ def delete_agent(agent_name: str):
 
     raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
     
+
+@app.get("/agent/state", response_model=AgentStateJSON)  # Response is str because it's a serialized object
+def get_agent_state():
+    if agent is None:
+        raise HTTPException(status_code=404, detail="No agent found")
+    agent_state = agent.get_state()
+
+    network_state = agent_state.network
+    buffer_state = agent_state.buffer
+    if agent_state.network is not None:
+        network_state = {'net': serialize(network_state.net)}
+    if agent_state.buffer is not None:
+        buffer_state = {
+            'type': buffer_state.type, 'buffer_size': str(buffer_state.buffer_size), 'batch_size': str(buffer_state.batch_size),
+            'data': serialize(buffer_state.data), 'extra': serialize(buffer_state.extra),
+            }
+    agent_config = {k: serialize(v) for (k, v) in agent_state.config.items()}
+
+    out: AgentStateJSON = AgentStateJSON(
+        model=agent_state.model, state_space=agent_state.state_space, action_space=agent_state.action_space,
+        config=agent_config, network=network_state, buffer=buffer_state,
+    )
+    return out
+
 
 @app.get("/agent/")
 def get_agent_info():
