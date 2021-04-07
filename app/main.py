@@ -23,10 +23,11 @@ print(f"OS env: {os.environ}")
 
 if not standalone:
     agent_id = int(os.environ.get('AGENT_ID'))
+    token = os.environ.get('TOKEN')
     url_base = os.environ.get("URL", "http://backend/api/v1/snap")
     url = f'{url_base}/{agent_id}'
     print(f"GET {url}")
-    response = requests.get(url)
+    response = requests.get(url, headers={"token": token})
     data = response.json()
 
     agent_config = data['agent_config']
