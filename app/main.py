@@ -1,15 +1,22 @@
+import sys
+from base64 import decode
 import os
 from typing import Dict, List, Optional
 
+import logging
 import requests
 from ai_traineree.agents.agent_factory import AgentFactory
 from ai_traineree.types import AgentState
 from ai_traineree.utils import serialize
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from .utils import decode_pickle, encode_pickle
+
 
 # Initiate module with setting up a server
 app = FastAPI()
+
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 standalone = os.environ.get('STANDALONE')
 if standalone is not None:
@@ -17,9 +24,11 @@ if standalone is not None:
 else:
     standalone = True
 
+
 # NOTE: Sometimes there's something wrong with these. Pay attention.
 print(f"OS env: {standalone}")
 print(f"OS env: {os.environ}")
+print("Updated")
 
 if not standalone:
     agent_id = int(os.environ.get('AGENT_ID'))
@@ -28,18 +37,15 @@ if not standalone:
     url = f'{url_base}/{agent_id}'
     print(f"GET {url}")
     response = requests.get(url, headers={"token": token})
+    print(response.text)
     data = response.json()
 
-    agent_config = data['agent_config']
-    agent_type = agent_config['model'].upper()
-    state_size = int(agent_config.pop('state_size'))
-    action_size = int(agent_config.pop('action_size'))
-
-    # TODO: Deserialize properly NetworkState and BufferState
-    # network_state = data['network_state']
-    # buffer_state = data['buffer_state']
-    network_state = None
-    buffer_state = None
+    agent_type = data['model'].upper()
+    state_size = int(data.pop('state_size'))
+    action_size = int(data.pop('action_size'))
+    agent_config = decode_pickle(data['encoded_config'])
+    network_state = decode_pickle(data['encoded_network'])
+    buffer_state = decode_pickle(data['encoded_buffer'])
 
     agent_state = AgentState(
         model=agent_type,
@@ -61,20 +67,23 @@ class AgentStep(BaseModel):
     reward: float
     done: bool
 
+
 class AgentStateJSON(BaseModel):
     model: str
     state_space: int
     action_space: int
-    config: Dict[str, str]
-    network: Optional[Dict[str, str]]
-    buffer: Optional[Dict[str, str]]
+    encoded_config: str
+    encoded_network: str
+    encoded_buffer: str
 
 
 SUPPORTED_AGENTS = ['dqn', 'ppo', 'ddpg', 'sac', 'd3pg', 'd4pg', 'rainbow', 'td3']
 
+
 @app.get("/ping")
 def ping():
     return {"msg": "All good"}
+
 
 @app.post("/agent", status_code=201)
 def create_agent(
@@ -97,7 +106,9 @@ def create_agent(
     agent_state = AgentState(model=model_type.upper(), state_space=state_size, action_space=action_size, config=model_config, network=network_state, buffer=buffer_state)
     agent = AgentFactory.from_state(agent_state)
     if agent is None:
-        raise HTTPException(400, detail="It's not clear how you got here. Well done. But that's incorrect. Please select supported agent.")
+        raise HTTPException(
+            status_code=400,
+            detail="It's not clear how you got here. Well done. But that's incorrect. Please select supported agent.")
     
     print(f"Agent: {agent}")
     return {"response": "Successfully created a new agent"}
@@ -117,26 +128,24 @@ def delete_agent(agent_name: str):
     raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
     
 
-@app.get("/agent/state", response_model=AgentStateJSON)  # Response is str because it's a serialized object
+@app.get("/agent/state", response_model=AgentStateJSON)
 def get_agent_state():
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
     agent_state = agent.get_state()
+    agent_config = agent_state.config
+    print(agent_config)
+    logging.info(str(agent_config))
+    for (k, v) in agent_config.items():
+        if k.lower() == 'device':
+            agent_config[k] = str(v)
+        logging.info(f"{k=}  |  {v=}  |  {type(v)}")
 
-    network_state = agent_state.network
-    buffer_state = agent_state.buffer
-    if agent_state.network is not None:
-        network_state = {'net': serialize(network_state.net)}
-    if agent_state.buffer is not None:
-        buffer_state = {
-            'type': buffer_state.type, 'buffer_size': str(buffer_state.buffer_size), 'batch_size': str(buffer_state.batch_size),
-            'data': serialize(buffer_state.data), 'extra': serialize(buffer_state.extra),
-            }
-    agent_config = {k: serialize(v) for (k, v) in agent_state.config.items()}
-
-    out: AgentStateJSON = AgentStateJSON(
+    out = AgentStateJSON(
         model=agent_state.model, state_space=agent_state.state_space, action_space=agent_state.action_space,
-        config=agent_config, network=network_state, buffer=buffer_state,
+        encoded_config=encode_pickle(agent_config),
+        encoded_network=encode_pickle(agent_state.network),
+        encoded_buffer=encode_pickle(agent_state.buffer)
     )
     return out
 
