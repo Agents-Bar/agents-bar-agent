@@ -1,28 +1,4 @@
-
-#######################################################
-FROM tiangolo/uvicorn-gunicorn-fastapi:python3.8 AS dev
-
-# set path to our python api file
-ENV MODULE_NAME="app.main"
-
-# Install Poetry
-RUN apt-get update && apt-get install curl -y
-RUN apt-get -y install git
-
-# install dependencies
-COPY requirements.txt .
-
-# Currently disabled as it may override laters pip install
-# RUN pip install ...
-
-# copy contents of project into docker
-COPY ./ /app
-
-#Expose port 80
-EXPOSE 80
-
-############################
-FROM python:3.8-slim AS prod
+FROM python:3.8-slim
 # set path to our python api file
 ENV MODULE_NAME="app.main"
 
