@@ -15,7 +15,7 @@ from .utils import decode_pickle, encode_pickle
 app = FastAPI()
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-SUPPORTED_AGENTS = ['dqn', 'ppo', 'ddpg', 'sac', 'd3pg', 'd4pg', 'rainbow', 'td3']
+SUPPORTED_AGENTS = ['DQN', 'PPO', 'DDPG', 'SAC', 'D3PG', 'D4PG', 'RAINBOW', 'TD3']
 
 
 def sync_agent_state(agent_id: int, token: str) -> AgentState:
@@ -59,11 +59,11 @@ def create_agent(
     # if agent is not None:
     #     raise HTTPException(status_code=400, detail="Agent already exists. If you want to create a new one, please first remove old one.")
 
-    if model_type.lower() not in SUPPORTED_AGENTS:
+    if model_type.upper() not in SUPPORTED_AGENTS:
         raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
 
     agent_state = AgentState(
-        model=model_type.upper(), state_space=state_size, action_space=action_size,
+        model=model_type, state_space=state_size, action_space=action_size,
         config=model_config, network=network_state, buffer=buffer_state
     )
     agent = AgentFactory.from_state(agent_state)
