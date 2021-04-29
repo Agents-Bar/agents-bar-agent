@@ -19,7 +19,7 @@ SUPPORTED_AGENTS = ['DQN', 'PPO', 'DDPG', 'SAC', 'D3PG', 'D4PG', 'RAINBOW', 'TD3
 
 
 def sync_agent_state(agent_id: int, token: str) -> AgentState:
-    url_base = os.environ.get("URL", "http://backend/api/v1/snap")
+    url_base = os.environ.get("URL", "http://backend/api/v1/snapshot/auto")
     url = f'{url_base}/{agent_id}'
     print(f"GET {url}")
     response = requests.get(url, headers={"token": token})
