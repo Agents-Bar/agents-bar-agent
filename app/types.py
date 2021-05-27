@@ -1,4 +1,5 @@
-from typing import Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -20,3 +21,10 @@ class AgentStateJSON(BaseModel):
     encoded_buffer: str
 
 
+class AgentInfo(BaseModel):
+    model: str
+    hyperparameters: Dict[str, Any]
+    last_active: datetime
+
+
+AgentLoss = Dict[str, Optional[float]]

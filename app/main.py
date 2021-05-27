@@ -1,6 +1,9 @@
 import logging
-import sys
+import math
 import os
+import sys
+from collections import deque
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import requests
@@ -8,7 +11,7 @@ from ai_traineree.agents.agent_factory import AgentFactory
 from ai_traineree.types import AgentState
 from fastapi import FastAPI, HTTPException
 
-from .types import AgentStateJSON, AgentStep
+from .types import AgentInfo, AgentLoss, AgentStateJSON, AgentStep
 from .utils import decode_pickle, encode_pickle
 
 # Initiate module with setting up a server
@@ -16,6 +19,10 @@ app = FastAPI()
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 SUPPORTED_AGENTS = ['DQN', 'PPO', 'DDPG', 'SAC', 'D3PG', 'D4PG', 'RAINBOW', 'TD3']
+
+last_active = datetime.utcnow()
+previous_active = datetime.utcnow()
+metrics_buffer = deque(maxlen=20)
 
 
 def sync_agent_state(agent_id: int, token: str) -> AgentState:
@@ -111,13 +118,11 @@ def get_agent_state():
     return out
 
 
-@app.get("/agent/")
+@app.get("/agent/", response_model=AgentInfo)
 def get_agent_info():
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
-    print(agent)
-    agent_info = {"agent_type": str(agent), "hyperparameters": agent.hparams}
-    return agent_info
+    return AgentInfo(model=agent.name, hyperparameters=agent.hparams, last_active=last_active)
 
 
 @app.get("/agent/hparams")
@@ -128,18 +133,21 @@ def get_agent_info():
     return {"hyperparameters": agent.hparams}
 
 
-@app.get("/agent/loss")
-def get_agent_loss():
+@app.get("/agent/loss", response_model=List[AgentLoss])
+def get_agent_loss(last_samples: int = 1):
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
-    print(agent.loss)
-    return agent.loss
+    if len(metrics_buffer) == 0:
+        raise HTTPException(status_code=400, detail=f"Not enough collected samples. Current count is {len(metrics_buffer)}.")
+    beg_idx = max(0, len(metrics_buffer) - last_samples)
+    return [metrics_buffer[i] for i in range(beg_idx, len(metrics_buffer))]
 
 
 @app.post("/agent/step", status_code=200)
 def agent_step(step: AgentStep):
-    global agent
     # TODO: Agent should have a property whether it's discrete
+    global last_active
+    last_active = datetime.utcnow()
     if agent.name in ('DQN', 'Rainbow'):
         action = int(step.action[0])
     else:
@@ -152,17 +160,35 @@ def agent_step(step: AgentStep):
         step.next_state,
         step.done
     )
+
+    collect_metrics()
+
     return {"response": "Stepping"}
 
 
 @app.post("/agent/act")
 def agent_act(state: List[float], noise: float=0.):
-    global agent
+    global last_active
+    last_active = datetime.utcnow()
     try:
         action = agent.act(state, noise)
-        return {"action": action}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sorry :(\n{e}")
+
+    collect_metrics()
+    return {"action": action}
+    
+
+def collect_metrics(wait_seconds=20):
+    global previous_active
+    now_time = datetime.utcnow()
+    if now_time < previous_active + timedelta(seconds=wait_seconds):
+        return
+
+    loss = {k: v if not math.isinf(v) else None for (k, v) in agent.loss.items()}
+    loss['time'] = now_time.timestamp()
+    metrics_buffer.append(loss)
+    previous_active = now_time
 
 
 ##############################
