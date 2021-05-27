@@ -11,7 +11,7 @@ from ai_traineree.agents.agent_factory import AgentFactory
 from ai_traineree.types import AgentState
 from fastapi import FastAPI, HTTPException
 
-from .types import AgentInfo, AgentLoss, AgentStateJSON, AgentStep
+from .types import AgentAction, AgentInfo, AgentLoss, AgentStateJSON, AgentStep
 from .utils import decode_pickle, encode_pickle
 
 # Initiate module with setting up a server
@@ -166,7 +166,7 @@ def agent_step(step: AgentStep):
     return {"response": "Stepping"}
 
 
-@app.post("/agent/act")
+@app.post("/agent/act", response_model=AgentAction)
 def agent_act(state: List[float], noise: float=0.):
     global last_active
     last_active = datetime.utcnow()
@@ -176,7 +176,7 @@ def agent_act(state: List[float], noise: float=0.):
         raise HTTPException(status_code=500, detail=f"Sorry :(\n{e}")
 
     collect_metrics()
-    return {"action": action}
+    return AgentAction(action=action)
     
 
 def collect_metrics(wait_seconds=20):
