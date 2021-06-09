@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 SUPPORTED_AGENTS = ['DQN', 'PPO', 'DDPG', 'SAC', 'D3PG', 'D4PG', 'RAINBOW', 'TD3']
 
 last_active = datetime.utcnow()
-previous_active = datetime.utcnow()
+last_metrics_time = datetime.utcnow()
 metrics_buffer = deque(maxlen=20)
 
 
@@ -125,6 +125,13 @@ def get_agent_info():
     return AgentInfo(model=agent.name, hyperparameters=agent.hparams, last_active=last_active)
 
 
+@app.get("/agent/last_active", response_model=datetime)
+def get_agent_info():
+    if agent is None:
+        raise HTTPException(status_code=404, detail="No agent found")
+    return last_active
+
+
 @app.get("/agent/hparams")
 def get_agent_info():
     if agent is None:
@@ -180,15 +187,15 @@ def agent_act(state: List[float], noise: float=0.):
     
 
 def collect_metrics(wait_seconds=20):
-    global previous_active
+    global last_metrics_time
     now_time = datetime.utcnow()
-    if now_time < previous_active + timedelta(seconds=wait_seconds):
+    if now_time < last_metrics_time + timedelta(seconds=wait_seconds):
         return
 
     loss = {k: v if not math.isinf(v) else None for (k, v) in agent.loss.items()}
     loss['time'] = now_time.timestamp()
     metrics_buffer.append(loss)
-    previous_active = now_time
+    last_metrics_time = now_time
 
 
 ##############################
