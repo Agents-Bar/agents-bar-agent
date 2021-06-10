@@ -192,7 +192,7 @@ def collect_metrics(wait_seconds=20):
     if now_time < last_metrics_time + timedelta(seconds=wait_seconds):
         return
 
-    loss = {k: v if not math.isinf(v) else None for (k, v) in agent.loss.items()}
+    loss = {k: v if not (math.isinf(v) or math.isnan(v)) else None for (k, v) in agent.loss.items()}
     loss['time'] = now_time.timestamp()
     metrics_buffer.append(loss)
     last_metrics_time = now_time
