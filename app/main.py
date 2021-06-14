@@ -161,10 +161,10 @@ def agent_step(step: AgentStep):
         action = step.action
 
     agent.step(
-        step.state,
+        step.obs,
         action,
         step.reward,
-        step.next_state,
+        step.next_obs,
         step.done
     )
 

@@ -11,9 +11,9 @@ class AgentAction(BaseModel):
 
 
 class AgentStep(BaseModel):
-    state: List[float]
+    obs: List[float]
     action: List[float]
-    next_state: List[float]
+    next_obs: List[float]
     reward: float
     done: bool
 
