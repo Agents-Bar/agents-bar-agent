@@ -1,4 +1,4 @@
-ai-traineree~=0.0.14
+ai-traineree~=0.1.1
 uvicorn~=0.13.4
 requests~=2.25.1
 fastapi~=0.63.0

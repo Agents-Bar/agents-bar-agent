@@ -32,7 +32,7 @@ def sync_agent_state(agent_id: int, token: str) -> AgentState:
     response = requests.get(url, headers={"token": token})
     data = response.json()
     agent_type = data['model'].upper()
-    state_size = int(data.pop('state_size'))
+    obs_size = int(data.pop('obs_size'))
     action_size = int(data.pop('action_size'))
     agent_config = decode_pickle(data['encoded_config'])
     network_state = decode_pickle(data['encoded_network'])
@@ -40,7 +40,7 @@ def sync_agent_state(agent_id: int, token: str) -> AgentState:
 
     return AgentState(
         model=agent_type,
-        state_space=state_size,
+        obs_space=obs_size,
         action_space=action_size,
         config=agent_config,
         network=network_state,
@@ -56,7 +56,7 @@ def ping():
 @app.post("/agent", status_code=201)
 def create_agent(
     model_type: str,
-    state_size: int,
+    obs_size: int,
     action_size: int,
     model_config: Optional[Dict[str, str]],
     network_state: Optional[bytes] = None,
@@ -70,7 +70,7 @@ def create_agent(
         raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
 
     agent_state = AgentState(
-        model=model_type, state_space=state_size, action_space=action_size,
+        model=model_type, obs_space=obs_size, action_space=action_size,
         config=model_config, network=network_state, buffer=buffer_state
     )
     agent = AgentFactory.from_state(agent_state)
@@ -110,7 +110,7 @@ def get_agent_state():
         logging.info(f"{k=}  |  {v=}  |  {type(v)}")
 
     out = AgentStateJSON(
-        model=agent_state.model, state_space=agent_state.state_space, action_space=agent_state.action_space,
+        model=agent_state.model, state_space=agent_state.obs_space, action_space=agent_state.action_space,
         encoded_config=encode_pickle(agent_config),
         encoded_network=encode_pickle(agent_state.network),
         encoded_buffer=encode_pickle(agent_state.buffer)
@@ -126,14 +126,14 @@ def get_agent_info():
 
 
 @app.get("/agent/last_active", response_model=datetime)
-def get_agent_info():
+def get_agent_last_active():
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
     return last_active
 
 
 @app.get("/agent/hparams")
-def get_agent_info():
+def get_agent_hparasm():
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
     print(agent.hparams)
