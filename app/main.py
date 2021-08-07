@@ -4,18 +4,22 @@ import os
 import sys
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import List
 
 import requests
 from ai_traineree.agents.agent_factory import AgentFactory
 from ai_traineree.types import AgentState
 from fastapi import FastAPI, HTTPException
 
-from .types import AgentAction, AgentInfo, AgentLoss, AgentStateJSON, AgentStep
+from .types import AgentAction, AgentCreate, AgentInfo, AgentLoss, AgentStateJSON, AgentStep
 from .utils import decode_pickle, encode_pickle
 
 # Initiate module with setting up a server
-app = FastAPI()
+app = FastAPI(
+    title="Agents Bar - Agent",
+    description="Agents Bar compatible Agent entity",
+    docs_url="/docs",
+)
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 SUPPORTED_AGENTS = ['DQN', 'PPO', 'DDPG', 'SAC', 'D3PG', 'D4PG', 'RAINBOW', 'TD3']
@@ -26,17 +30,30 @@ metrics_buffer = deque(maxlen=20)
 
 
 def sync_agent_state(agent_id: int, token: str) -> AgentState:
+    logging.info("Synchronizing agent with the backend")
     url_base = os.environ.get("URL", "http://backend/api/v1/snapshots/auto")
     url = f'{url_base}/{agent_id}'
-    print(f"GET {url}")
+    logging.info(f"GET {url}")
     response = requests.get(url, headers={"token": token})
     data = response.json()
     agent_type = data['model'].upper()
-    obs_size = int(data.pop('obs_size'))
-    action_size = int(data.pop('action_size'))
+
+    obs_space = data.pop('obs_space')
+    raw_obs_shape = obs_space['shape']
+    assert isinstance(raw_obs_shape, list) and len(raw_obs_shape) == 1, "Provided wrong 'obs_space': " + str(obs_space)
+    obs_size = int(raw_obs_shape[0])
+
+    action_space = data.pop('action_space')
+    raw_action_shape = action_space['shape']
+    assert isinstance(raw_action_shape, list) and len(raw_action_shape) == 1, "Provided wrong 'action_space': " + str(action_space)
+    action_size = int(raw_action_shape[0])
+
     agent_config = decode_pickle(data['encoded_config'])
     network_state = decode_pickle(data['encoded_network'])
     buffer_state = decode_pickle(data['encoded_buffer'])
+
+    agent_config['obs_size'] = obs_size
+    agent_config['action_size'] = action_size
 
     return AgentState(
         model=agent_type,
@@ -54,24 +71,27 @@ def ping():
 
 
 @app.post("/agent", status_code=201)
-def create_agent(
-    model_type: str,
-    obs_size: int,
-    action_size: int,
-    model_config: Optional[Dict[str, str]],
-    network_state: Optional[bytes] = None,
-    buffer_state: Optional[bytes] = None,
-):
+def api_post_agent(agent_create: AgentCreate):
     global agent
     # if agent is not None:
     #     raise HTTPException(status_code=400, detail="Agent already exists. If you want to create a new one, please first remove old one.")
 
-    if model_type.upper() not in SUPPORTED_AGENTS:
+    if agent_create.model_type.upper() not in SUPPORTED_AGENTS:
         raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
 
+    obs_size = agent_create.obs_space['shape'][0]
+    action_size = agent_create.action_space['shape'][0]
+    config = agent_create.model_config or {}
+    config['obs_size'] = obs_size
+    config['action_size'] = action_size
+
+    network_state = agent_create.network_state
+    buffer_state = agent_create.buffer_state
+
     agent_state = AgentState(
-        model=model_type, obs_space=obs_size, action_space=action_size,
-        config=model_config, network=network_state, buffer=buffer_state
+        model=agent_create.model_type,
+        obs_space=obs_size, action_space=action_size,
+        config=config, network=network_state, buffer=buffer_state
     )
     agent = AgentFactory.from_state(agent_state)
     if agent is None:
@@ -84,7 +104,7 @@ def create_agent(
 
 
 @app.delete("/agent/{agent_name}", status_code=204)
-def delete_agent(agent_name: str):
+def api_delete_agent(agent_name: str):
     """Assumption is that the service contains only one agent. Otherwise... something else."""
     global agent
     if agent is None:
@@ -98,7 +118,7 @@ def delete_agent(agent_name: str):
     
 
 @app.get("/agent/state", response_model=AgentStateJSON)
-def get_agent_state():
+def api_get_agent_state():
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
     agent_state = agent.get_state()
@@ -110,7 +130,9 @@ def get_agent_state():
         logging.info(f"{k=}  |  {v=}  |  {type(v)}")
 
     out = AgentStateJSON(
-        model=agent_state.model, state_space=agent_state.obs_space, action_space=agent_state.action_space,
+        model=agent_state.model,
+        state_space=agent_state.obs_space,
+        action_space=agent_state.action_space,
         encoded_config=encode_pickle(agent_config),
         encoded_network=encode_pickle(agent_state.network),
         encoded_buffer=encode_pickle(agent_state.buffer)
@@ -119,21 +141,22 @@ def get_agent_state():
 
 
 @app.get("/agent/", response_model=AgentInfo)
-def get_agent_info():
+def api_get_agent_info():
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
-    return AgentInfo(model=agent.name, hyperparameters=agent.hparams, last_active=last_active)
+    discret = agent.agent_model.upper() in ('DQN', 'RAINBOW')
+    return AgentInfo(model=agent.name, hyperparameters=agent.hparams, last_active=last_active, discret=discret)
 
 
 @app.get("/agent/last_active", response_model=datetime)
-def get_agent_last_active():
+def api_get_agent_last_active():
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
     return last_active
 
 
 @app.get("/agent/hparams")
-def get_agent_hparasm():
+def api_get_agent_hparasm():
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
     print(agent.hparams)
@@ -141,7 +164,7 @@ def get_agent_hparasm():
 
 
 @app.get("/agent/loss", response_model=List[AgentLoss])
-def get_agent_loss(last_samples: int = 1):
+def api_get_agent_loss(last_samples: int = 1):
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent found")
     if len(metrics_buffer) == 0:
@@ -151,8 +174,9 @@ def get_agent_loss(last_samples: int = 1):
 
 
 @app.post("/agent/step", status_code=200)
-def agent_step(step: AgentStep):
+def api_post_agent_step(step: AgentStep):
     # TODO: Agent should have a property whether it's discrete
+    assert agent, "Agent needs to be initiated before it can be used"
     global last_active
     last_active = datetime.utcnow()
     if agent.name in ('DQN', 'Rainbow'):
@@ -174,7 +198,8 @@ def agent_step(step: AgentStep):
 
 
 @app.post("/agent/act", response_model=AgentAction)
-def agent_act(state: List[float], noise: float=0.):
+def api_post_agent_act(state: List[float], noise: float=0.):
+    assert agent, "Agent needs to be initiated before it can be used"
     global last_active
     last_active = datetime.utcnow()
     try:
@@ -187,6 +212,7 @@ def agent_act(state: List[float], noise: float=0.):
     
 
 def collect_metrics(wait_seconds=20):
+    assert agent, "Agent needs to be initiated before it can be used"
     global last_metrics_time
     now_time = datetime.utcnow()
     if now_time < last_metrics_time + timedelta(seconds=wait_seconds):
@@ -215,3 +241,4 @@ if not standalone:
     state = sync_agent_state(agent_id, token)
     # Leave things to get magic done in factory
     agent = AgentFactory.from_state(state=state)
+    print("Initiated agent: " + str(agent))
