@@ -9,9 +9,11 @@ from typing import List
 import requests
 from ai_traineree.agents.agent_factory import AgentFactory
 from ai_traineree.types import AgentState
-from fastapi import FastAPI, HTTPException
+from ai_traineree.types.primitive import ObservationType
+from fastapi import Depends, FastAPI, HTTPException
 
-from .types import AgentAction, AgentCreate, AgentInfo, AgentLoss, AgentStateJSON, AgentStep
+from .types import (AgentAction, AgentCreate, AgentInfo, AgentLoss,
+                    AgentStateJSON, AgentStep)
 from .utils import decode_pickle, encode_pickle
 
 # Initiate module with setting up a server
@@ -19,14 +21,237 @@ app = FastAPI(
     title="Agents Bar - Agent",
     description="Agents Bar compatible Agent entity",
     docs_url="/docs",
+    version="0.1.1",
 )
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 SUPPORTED_AGENTS = ['DQN', 'PPO', 'DDPG', 'SAC', 'D3PG', 'D4PG', 'RAINBOW', 'TD3']
 
+agent = None
+last_step = {}
 last_active = datetime.utcnow()
 last_metrics_time = datetime.utcnow()
 metrics_buffer = deque(maxlen=20)
+
+
+def global_agent():
+    "Global agent handling. It's mainly a helper function to handle exception."
+    global agent
+    if agent is None:
+        raise HTTPException(status_code=404, detail="No agent found")
+    return agent
+    
+
+@app.get("/ping")
+def ping():
+    return {"msg": "All good"}
+
+
+@app.post("/agent", status_code=201)
+def api_post_agent(agent_create: AgentCreate):
+    """Create agent.
+    
+    The agent is reused by other methods. There is no "update" method to agent's interal state
+    so in case it needs changes it should be deleted and recreated.
+
+    """
+    global agent
+    # if agent is not None:
+    #     raise HTTPException(status_code=400, detail="Agent already exists. If you want to create a new one, please first remove old one.")
+
+    if agent_create.model_type.upper() not in SUPPORTED_AGENTS:
+        raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
+
+    config = agent_create.model_config or {}
+    agent_create.obs_space.shape = tuple(agent_create.obs_space.shape)
+    agent_create.action_space.shape = tuple(agent_create.action_space.shape)
+    config['obs_space'] = agent_create.obs_space
+    config['action_size'] = agent_create.action_space
+
+    network_state = agent_create.network_state
+    buffer_state = agent_create.buffer_state
+
+    agent_state = AgentState(
+        model=agent_create.model_type,
+        obs_space=agent_create.obs_space, action_space=agent_create.action_space,
+        config=config, network=network_state, buffer=buffer_state
+    )
+    print(agent_state)
+    agent = AgentFactory.from_state(agent_state)
+    if agent is None:
+        raise HTTPException(
+            status_code=400,
+            detail="It's not clear how you got here. Well done. But that's incorrect. Please select supported agent.")
+    
+    print(f"Agent: {agent}")
+    return {"response": "Successfully created a new agent"}
+
+
+@app.delete("/agent/{agent_name}", status_code=204)
+def api_delete_agent(agent_name: str, agent = Depends(global_agent)):
+    """Deletes agent and all related attribute. A hard reset.
+
+    Agent name (reference) is necessary to prevent accidental deletion.
+    """
+    if agent.name == agent_name:
+        agent = None
+        return {"response": "Deleted successfully."}
+
+    raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+    
+
+@app.get("/agent", response_model=AgentInfo)
+def api_get_agent_info(agent = Depends(global_agent)):
+    """Describes agent.
+
+    Provides summary information of the agent.
+    The method should be relatively light.
+    """
+    discret = agent.model.upper() in ('DQN', 'RAINBOW')
+    print(agent.net)
+    # breakpoint()
+    return AgentInfo(model=agent.model, hyperparameters=agent.hparams, last_active=last_active, discret=discret)
+
+
+@app.get("/agent/state", response_model=AgentStateJSON)
+def api_get_agent_state(agent = Depends(global_agent)):
+    """Retruns agent's state.
+
+    The state should be sufficient to fully describe and reconstruct the agent.
+    It might be that in some situations the reconstructed agent doesn't produce
+    the exact same output, e.g. due to internal randomness, but statistically
+    they need to be the same.
+    
+    """
+    agent_state = agent.get_state()
+    agent_config = agent_state.config
+    logging.info("Agent config: %s", str(agent_config))
+
+    return AgentStateJSON(
+        model=agent_state.model,
+        state_space=agent_state.obs_space,
+        action_space=agent_state.action_space,
+        encoded_config=encode_pickle(agent_config),
+        encoded_network=encode_pickle(agent_state.network),
+        encoded_buffer=encode_pickle(agent_state.buffer)
+    )
+
+
+@app.get("/agent/last_active", response_model=datetime)
+def api_get_agent_last_active(agent = Depends(global_agent)):
+    """Returns timestamp of agent's latest usage."""
+    return last_active
+
+
+@app.get("/agent/hparams")
+def api_get_agent_hparasm(agent = Depends(global_agent)):
+    """Returns hashmap of agent's hyperparameters."""
+    print(agent.hparams)
+    return {"hyperparameters": agent.hparams}
+
+
+@app.get("/agent/loss", response_model=List[AgentLoss])
+def api_get_agent_loss(last_samples: int = 1, agent=Depends(global_agent)):
+    """Returns agent's loss values.
+
+    By default it only returns the most recent metrics, i.e. single timestamp.
+    Max timestamp values is based on the agent's intialization.
+    """
+    if len(metrics_buffer) == 0:
+        raise HTTPException(status_code=400, detail=f"Not enough collected samples. Current count is {len(metrics_buffer)}.")
+    beg_idx = max(0, len(metrics_buffer) - last_samples)
+    return [metrics_buffer[i] for i in range(beg_idx, len(metrics_buffer))]
+
+
+@app.post("/agent/step", status_code=200)
+def api_post_agent_step(step: AgentStep, commit: bool = True, agent = Depends(global_agent)):
+    """Feed agent with step information.
+
+    The minimum required is the current state and reward.
+    Some agents, for convinience, might also require passing last action,
+    auxilary infrmation whether state is terminal (done) and the next state.
+    
+    By default, the Step is committed to the agent in the request.
+    In case it's needed to delay committing, e.g. gathering all information first,
+    one can use `/agent/commit` method.
+
+    """
+    # TODO: Agent should have a property whether it's discrete
+    global last_active, last_step
+    last_active = datetime.utcnow()
+    if agent.model in ('DQN', 'Rainbow'):
+        action = int(step.action[0])
+    else:
+        action = step.action
+
+    last_step = dict(
+        last_step_obs=step.obs,
+        last_action=action,
+        last_step_reward=step.reward,
+        last_step_next_obs=step.next_obs,
+        last_step_done=step.done,
+    )
+    if commit:
+        agent_commit()
+        return {"response": "Stepping"}
+
+    return {"response": "Submitted"}
+
+
+@app.post("/agent/commit", status_code=200)
+def api_post_agent_commit(agent = Depends(global_agent)):
+    """Commits submitted step into Agent.
+
+    Before using this method the data needs to be submitted using `/agent/step`.
+    """
+    global last_active, last_step
+    last_active = datetime.utcnow()
+    agent_commit()
+
+
+@app.post("/agent/act", response_model=AgentAction)
+def api_post_agent_act(state: ObservationType, noise: float=0., agent = Depends(global_agent)):
+    """Infers action based on provided observation.
+
+    """
+    global last_active
+    last_active = datetime.utcnow()
+    try:
+        action = agent.act(state, noise)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sorry :(\n{e}")
+
+    collect_metrics()
+    return AgentAction(action=action)
+    
+
+def agent_commit():
+    global agent, last_step
+    assert agent is not None, "Agent needs to be initialized"
+
+    agent.step(
+        last_step['last_step_obs'],
+        last_step['last_action'],
+        last_step['last_step_reward'],
+        last_step['last_step_next_obs'],
+        last_step['last_step_done'],
+    )
+    last_step = {}  # Empty once used
+
+    collect_metrics()
+
+
+def collect_metrics(wait_seconds=20):
+    assert agent, "Agent needs to be initiated before it can be used"
+    global last_metrics_time
+    now_time = datetime.utcnow()
+    if now_time < last_metrics_time + timedelta(seconds=wait_seconds):
+        return
+
+    loss = {k: v if not (math.isinf(v) or math.isnan(v)) else None for (k, v) in agent.loss.items()}
+    loss['time'] = now_time.timestamp()
+    metrics_buffer.append(loss)
+    last_metrics_time = now_time
 
 
 def sync_agent_state(agent_id: int, token: str) -> AgentState:
@@ -65,165 +290,6 @@ def sync_agent_state(agent_id: int, token: str) -> AgentState:
     )
 
 
-@app.get("/ping")
-def ping():
-    return {"msg": "All good"}
-
-
-@app.post("/agent", status_code=201)
-def api_post_agent(agent_create: AgentCreate):
-    global agent
-    # if agent is not None:
-    #     raise HTTPException(status_code=400, detail="Agent already exists. If you want to create a new one, please first remove old one.")
-
-    if agent_create.model_type.upper() not in SUPPORTED_AGENTS:
-        raise HTTPException(status_code=400, detail=f"Only {SUPPORTED_AGENTS} agent types are supported")
-
-    obs_size = agent_create.obs_space['shape'][0]
-    action_size = agent_create.action_space['shape'][0]
-    config = agent_create.model_config or {}
-    config['obs_size'] = obs_size
-    config['action_size'] = action_size
-
-    network_state = agent_create.network_state
-    buffer_state = agent_create.buffer_state
-
-    agent_state = AgentState(
-        model=agent_create.model_type,
-        obs_space=obs_size, action_space=action_size,
-        config=config, network=network_state, buffer=buffer_state
-    )
-    agent = AgentFactory.from_state(agent_state)
-    if agent is None:
-        raise HTTPException(
-            status_code=400,
-            detail="It's not clear how you got here. Well done. But that's incorrect. Please select supported agent.")
-    
-    print(f"Agent: {agent}")
-    return {"response": "Successfully created a new agent"}
-
-
-@app.delete("/agent/{agent_name}", status_code=204)
-def api_delete_agent(agent_name: str):
-    """Assumption is that the service contains only one agent. Otherwise... something else."""
-    global agent
-    if agent is None:
-        return {"response": "Agent doesn't exist."}
-
-    if agent.name == agent_name:
-        agent = None
-        return {"response": "Deleted successfully."}
-
-    raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
-    
-
-@app.get("/agent/state", response_model=AgentStateJSON)
-def api_get_agent_state():
-    if agent is None:
-        raise HTTPException(status_code=404, detail="No agent found")
-    agent_state = agent.get_state()
-    agent_config = agent_state.config
-    logging.info(str(agent_config))
-    for (k, v) in agent_config.items():
-        if k.lower() == 'device':
-            agent_config[k] = str(v)
-        logging.info(f"{k=}  |  {v=}  |  {type(v)}")
-
-    out = AgentStateJSON(
-        model=agent_state.model,
-        state_space=agent_state.obs_space,
-        action_space=agent_state.action_space,
-        encoded_config=encode_pickle(agent_config),
-        encoded_network=encode_pickle(agent_state.network),
-        encoded_buffer=encode_pickle(agent_state.buffer)
-    )
-    return out
-
-
-@app.get("/agent/", response_model=AgentInfo)
-def api_get_agent_info():
-    if agent is None:
-        raise HTTPException(status_code=404, detail="No agent found")
-    discret = agent.agent_model.upper() in ('DQN', 'RAINBOW')
-    return AgentInfo(model=agent.name, hyperparameters=agent.hparams, last_active=last_active, discret=discret)
-
-
-@app.get("/agent/last_active", response_model=datetime)
-def api_get_agent_last_active():
-    if agent is None:
-        raise HTTPException(status_code=404, detail="No agent found")
-    return last_active
-
-
-@app.get("/agent/hparams")
-def api_get_agent_hparasm():
-    if agent is None:
-        raise HTTPException(status_code=404, detail="No agent found")
-    print(agent.hparams)
-    return {"hyperparameters": agent.hparams}
-
-
-@app.get("/agent/loss", response_model=List[AgentLoss])
-def api_get_agent_loss(last_samples: int = 1):
-    if agent is None:
-        raise HTTPException(status_code=404, detail="No agent found")
-    if len(metrics_buffer) == 0:
-        raise HTTPException(status_code=400, detail=f"Not enough collected samples. Current count is {len(metrics_buffer)}.")
-    beg_idx = max(0, len(metrics_buffer) - last_samples)
-    return [metrics_buffer[i] for i in range(beg_idx, len(metrics_buffer))]
-
-
-@app.post("/agent/step", status_code=200)
-def api_post_agent_step(step: AgentStep):
-    # TODO: Agent should have a property whether it's discrete
-    assert agent, "Agent needs to be initiated before it can be used"
-    global last_active
-    last_active = datetime.utcnow()
-    if agent.name in ('DQN', 'Rainbow'):
-        action = int(step.action[0])
-    else:
-        action = step.action
-
-    agent.step(
-        step.obs,
-        action,
-        step.reward,
-        step.next_obs,
-        step.done
-    )
-
-    collect_metrics()
-
-    return {"response": "Stepping"}
-
-
-@app.post("/agent/act", response_model=AgentAction)
-def api_post_agent_act(state: List[float], noise: float=0.):
-    assert agent, "Agent needs to be initiated before it can be used"
-    global last_active
-    last_active = datetime.utcnow()
-    try:
-        action = agent.act(state, noise)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sorry :(\n{e}")
-
-    collect_metrics()
-    return AgentAction(action=action)
-    
-
-def collect_metrics(wait_seconds=20):
-    assert agent, "Agent needs to be initiated before it can be used"
-    global last_metrics_time
-    now_time = datetime.utcnow()
-    if now_time < last_metrics_time + timedelta(seconds=wait_seconds):
-        return
-
-    loss = {k: v if not (math.isinf(v) or math.isnan(v)) else None for (k, v) in agent.loss.items()}
-    loss['time'] = now_time.timestamp()
-    metrics_buffer.append(loss)
-    last_metrics_time = now_time
-
-
 ##############################
 # MAIN
 
@@ -232,8 +298,7 @@ standalone = os.environ.get('STANDALONE', '1')
 standalone = not (standalone.lower() == 'false' or standalone == '0')
 
 # NOTE: Sometimes there's something wrong with these. Pay attention.
-print(f"OS env: {standalone}")
-print(f"OS env: {os.environ}")
+print(f"Standalone agent: {standalone}")
 
 if not standalone:
     agent_id = int(os.environ.get('AGENT_ID'))
