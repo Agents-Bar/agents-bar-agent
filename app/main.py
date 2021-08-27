@@ -12,8 +12,7 @@ from ai_traineree.types import AgentState
 from ai_traineree.types.primitive import ObservationType
 from fastapi import Depends, FastAPI, HTTPException
 
-from .types import (AgentAction, AgentCreate, AgentInfo, AgentLoss,
-                    AgentStateJSON, AgentStep)
+from .types import AgentAction, AgentCreate, AgentInfo, AgentLoss, AgentStateJSON, AgentStep, DataSpace
 from .utils import decode_pickle, encode_pickle
 
 # Initiate module with setting up a server
@@ -25,7 +24,7 @@ app = FastAPI(
 )
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-SUPPORTED_AGENTS = ['DQN', 'PPO', 'DDPG', 'SAC', 'D3PG', 'D4PG', 'RAINBOW', 'TD3']
+SUPPORTED_AGENTS = ('DQN', 'PPO', 'DDPG', 'SAC', 'D3PG', 'D4PG', 'RAINBOW', 'TD3')
 
 agent = None
 last_step = {}
@@ -76,14 +75,12 @@ def api_post_agent(agent_create: AgentCreate):
         obs_space=agent_create.obs_space, action_space=agent_create.action_space,
         config=config, network=network_state, buffer=buffer_state
     )
-    print(agent_state)
     agent = AgentFactory.from_state(agent_state)
     if agent is None:
         raise HTTPException(
             status_code=400,
             detail="It's not clear how you got here. Well done. But that's incorrect. Please select supported agent.")
     
-    print(f"Agent: {agent}")
     return {"response": "Successfully created a new agent"}
 
 
@@ -125,7 +122,7 @@ def api_get_agent_state(agent = Depends(global_agent)):
     """
     agent_state = agent.get_state()
     agent_config = agent_state.config
-    logging.info("Agent config: %s", str(agent_config))
+    agent_config['device'] = str(agent_config.get('device', 'cpu'))
 
     return AgentStateJSON(
         model=agent_state.model,
