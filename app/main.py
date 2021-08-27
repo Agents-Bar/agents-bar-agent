@@ -267,32 +267,21 @@ def sync_agent_state(agent_id: int, token: str) -> AgentState:
     logging.info("Synchronizing agent with the backend")
     url_base = os.environ.get("URL", "http://backend/api/v1/snapshots/auto")
     url = f'{url_base}/{agent_id}'
-    logging.info(f"GET {url}")
     response = requests.get(url, headers={"token": token})
     data = response.json()
     agent_type = data['model'].upper()
 
     obs_space = data.pop('obs_space')
-    raw_obs_shape = obs_space['shape']
-    assert isinstance(raw_obs_shape, list) and len(raw_obs_shape) == 1, "Provided wrong 'obs_space': " + str(obs_space)
-    obs_size = int(raw_obs_shape[0])
-
     action_space = data.pop('action_space')
-    raw_action_shape = action_space['shape']
-    assert isinstance(raw_action_shape, list) and len(raw_action_shape) == 1, "Provided wrong 'action_space': " + str(action_space)
-    action_size = int(raw_action_shape[0])
 
     agent_config = decode_pickle(data['encoded_config'])
     network_state = decode_pickle(data['encoded_network'])
     buffer_state = decode_pickle(data['encoded_buffer'])
 
-    agent_config['obs_size'] = obs_size
-    agent_config['action_size'] = action_size
-
     return AgentState(
         model=agent_type,
-        obs_space=obs_size,
-        action_space=action_size,
+        obs_space=DataSpace(**obs_space),
+        action_space=DataSpace(**action_space),
         config=agent_config,
         network=network_state,
         buffer=buffer_state,
