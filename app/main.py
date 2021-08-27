@@ -209,6 +209,15 @@ def api_post_agent_commit(agent = Depends(global_agent)):
     agent_commit()
 
 
+@app.post("/agent/reset", status_code=200)
+def api_post_agent_commit(agent = Depends(global_agent)):
+    """Commits submitted step into Agent.
+
+    Before using this method the data needs to be submitted using `/agent/step`.
+    """
+    agent.reset()
+
+
 @app.post("/agent/act", response_model=AgentAction)
 def api_post_agent_act(state: ObservationType, noise: float=0., agent = Depends(global_agent)):
     """Infers action based on provided observation.
