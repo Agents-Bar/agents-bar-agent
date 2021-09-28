@@ -65,7 +65,7 @@ def api_post_agent(agent_create: AgentCreate):
     agent_create.obs_space.shape = tuple(agent_create.obs_space.shape)
     agent_create.action_space.shape = tuple(agent_create.action_space.shape)
     config['obs_space'] = agent_create.obs_space
-    config['action_size'] = agent_create.action_space
+    config['action_space'] = agent_create.action_space
 
     network_state = agent_create.network_state
     buffer_state = agent_create.buffer_state
@@ -123,6 +123,18 @@ def api_get_agent_state(agent = Depends(global_agent)):
     agent_state = agent.get_state()
     agent_config = agent_state.config
     agent_config['device'] = str(agent_config.get('device', 'cpu'))
+
+    # TODO: This shouldn't be `dict` check
+    if 'obs_space' in agent_config:
+        obs_space = agent_config.get('obs_space')
+        if not isinstance(obs_space, dict):
+            obs_space = obs_space.dict()
+        agent_config['obs_space'] = obs_space
+    if 'action_space' in agent_config:
+        action_space = agent_config.get('action_space')
+        if not isinstance(action_space, dict):
+            action_space = action_space.dict()
+        agent_config['action_space'] = action_space
 
     return AgentStateJSON(
         model=agent_state.model,
@@ -207,10 +219,10 @@ def api_post_agent_commit(agent = Depends(global_agent)):
 
 
 @app.post("/agent/reset", status_code=200)
-def api_post_agent_commit(agent = Depends(global_agent)):
-    """Commits submitted step into Agent.
+def api_post_agent_reset(agent = Depends(global_agent)):
+    """Resets Agent.
 
-    Before using this method the data needs to be submitted using `/agent/step`.
+    Clears Agents states.
     """
     agent.reset()
 
