@@ -4,3 +4,4 @@ uvicorn~=0.15.0
 requests~=2.26.0
 fastapi~=0.68.0
 pydantic~=1.8.2
+jsons~=1.5.1
