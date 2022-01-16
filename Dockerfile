@@ -6,8 +6,9 @@ FROM python:3.8-slim as base
 RUN pip install --user torch==1.9.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
 # Requirements in external file so that GitHub Dependabot shows vulnerabilities
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --user -r /tmp/requirements.txt
+COPY setup.py setup.py
+COPY setup.cfg setup.cfg
+RUN pip install --user -e .
 
 ########################################################
 # Proper image
