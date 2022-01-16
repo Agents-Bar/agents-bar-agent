@@ -21,6 +21,6 @@ COPY ./ /app
 ENV PATH=/root/.local:/root/.local/bin:$PATH
 ENV MODULE_NAME="app.main"
 
-LABEL ai-traineree=v0.3.5
+LABEL ai-traineree=v0.4.2
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--app-dir", "/app"]
