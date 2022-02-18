@@ -24,6 +24,7 @@ app = FastAPI(
     version="0.1.1",
 )
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+logger = logging.getLogger()
 
 SUPPORTED_AGENTS = ("DQN", "PPO", "DDPG", "SAC", "D3PG", "D4PG", "RAINBOW", "TD3")
 
@@ -246,8 +247,11 @@ def api_post_agent_act(state: ObservationType, noise: float = 0.0, agent=Depends
     global last_active
     last_active = datetime.utcnow()
     try:
-        action = agent.act(state, noise)
+        exp = Experience(obs=state)
+        exp = agent.act(exp, noise)
+        action = exp.action
     except Exception as e:
+        logger.exception("Failed to exceute `agent.act` with state=%s and noise=%s", str(state), str(noise))
         raise HTTPException(status_code=500, detail=f"Sorry :(\n{e}")
 
     collect_metrics()
