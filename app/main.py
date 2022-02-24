@@ -149,7 +149,7 @@ def api_get_agent_state(agent=Depends(global_agent)):
 
     return AgentStateJSON(
         model=agent_state.model,
-        state_space=asdict(agent_state.obs_space),
+        obs_space=asdict(agent_state.obs_space),
         action_space=asdict(agent_state.action_space),
         encoded_config=encode_pickle(agent_config),
         encoded_network=encode_pickle(agent_state.network),

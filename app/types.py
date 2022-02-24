@@ -22,7 +22,7 @@ class AgentStep(BaseModel):
 
 class AgentStateJSON(BaseModel):
     model: str
-    state_space: Dict[str, Any]
+    obs_space: Dict[str, Any]
     action_space: Dict[str, Any]
     encoded_config: str
     encoded_network: str
