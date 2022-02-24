@@ -1,0 +1,15 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+  "setuptools>=42",
+  "wheel",
+]
+
+[tool.isort]
+force_grid_wrap = 0
+include_trailing_comma = true
+line_length = 120
+multi_line_output = 3
+
+[tool.black]
+line_length = 120

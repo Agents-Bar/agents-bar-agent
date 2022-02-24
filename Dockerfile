@@ -7,7 +7,7 @@ RUN pip install --upgrade pip~=22.0.3
 RUN pip install --user torch==1.9.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
 # Requirements in external file so that GitHub Dependabot shows vulnerabilities
-COPY setup.py setup.py
+COPY pyproject.toml pyproject.toml
 COPY setup.cfg setup.cfg
 RUN pip install --user -e .
 
