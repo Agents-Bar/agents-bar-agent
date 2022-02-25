@@ -21,7 +21,7 @@ app = FastAPI(
     title="Agents Bar - Agent",
     description="Agents Bar compatible Agent entity",
     docs_url="/docs",
-    version="0.1.1",
+    version="0.1.2",
 )
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger()
@@ -147,6 +147,11 @@ def api_get_agent_state(agent=Depends(global_agent)):
     agent_config = agent_state.config
     agent_config["device"] = str(agent_config.get("device", "cpu"))
 
+    if "obs_space" in agent_config:
+        del agent_config["obs_space"]
+    if "action_space" in agent_config:
+        del agent_config["action_space"]
+
     return AgentStateJSON(
         model=agent_state.model,
         obs_space=asdict(agent_state.obs_space),
@@ -215,7 +220,7 @@ def api_post_agent_step(step: AgentStep, commit: bool = True, agent=Depends(glob
         last_step_done=step.done,
     )
     if commit:
-        agent_commit()
+        agent_commit(agent)
         return {"response": "Stepping"}
 
     return {"response": "Submitted"}
@@ -229,7 +234,7 @@ def api_post_agent_commit(agent=Depends(global_agent)):
     """
     global last_active, last_step
     last_active = datetime.utcnow()
-    agent_commit()
+    agent_commit(agent)
 
 
 @app.post("/agent/reset", status_code=200)
@@ -258,8 +263,8 @@ def api_post_agent_act(state: ObservationType, noise: float = 0.0, agent=Depends
     return AgentAction(action=action)
 
 
-def agent_commit():
-    global agent, last_step
+def agent_commit(agent):
+    global last_step
     assert agent is not None, "Agent needs to be initialized"
 
     agent.step(
